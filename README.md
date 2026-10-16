@@ -6,6 +6,13 @@
 
 [![CircleCI](https://circleci.com/gh/airsidemobile/JOSESwift/tree/master.svg?style=svg)](https://circleci.com/gh/airsidemobile/JOSESwift/tree/master)
 
+> <span style="color:red">**⚠️ Development and Testing Notice**</span>
+>
+> <span style="color:red">**Important:** Running `swift test` currently fails because `SignatureAlgorithmTests.swift` exists in two locations: `Tests/JOSESwiftTests/SignatureAlgorithmTests.swift` and `Tests/SignatureAlgorithmTests.swift`. SwiftPM reports a duplicate filename error, preventing the test target from compiling. The duplicate test file or its target configuration must be addressed before the test suite can run successfully.</span>
+>
+> <span style="color:red">The source code defines JWS signature algorithms including HS256, RS256, ES256, and PS256, subject to platform availability and implementation limitations. This notice documents the current testing issue and does not indicate that all algorithms have been independently verified on Linux.</span>
+
+
 > :bulb: Please note that this implementation of the JOSE standards is not fully complete yet. For example, there is only a limited set of supported algorithms available at the moment. Moreover we currently only support compact serialization of JOSE types. If you are missing a specific feature, algorithm, or serialization, feel free to [submit a pull request](#contributing).
 
 ## Contents
