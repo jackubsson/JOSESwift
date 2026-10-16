@@ -24,6 +24,10 @@
 
 import XCTest
 
+#if canImport(Security)
+import Security
+#endif
+
 class CryptoTestCase: XCTestCase {
     let message = "The true sign of intelligence is not knowledge but imagination."
 
@@ -36,6 +40,7 @@ class CryptoTestCase: XCTestCase {
         XCTFail("Setup keys function is missing")
     }
 
+#if canImport(Security)
     static func setupSecKeyPair(type: String, size: Int, data: Data, tag: String) -> (privateKey: SecKey, publicKey: SecKey)? {
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: type,
@@ -57,6 +62,7 @@ class CryptoTestCase: XCTestCase {
 
         return (privateKey, publicKey)
     }
+#endif
 }
 
 extension String {

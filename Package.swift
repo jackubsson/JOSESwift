@@ -20,6 +20,21 @@ let package = Package(
             ],
             path: "JOSESwift",
             exclude: ["Support/Info.plist"]
+        ),
+        .testTarget(
+            name: "JOSESwiftTests",
+            dependencies: ["JOSESwift"],
+            path: "Tests",
+            sources: [
+                "ASN1DEREncodingTests.swift",
+                "ASN1DERParsingTests.swift",
+                "CryptoTestCase.swift",
+                "DataExtensionTests.swift",
+                "HMACCryptoTestCase.swift",
+                "HMACSignerTests.swift",
+                "HMACTests.swift",
+                "HMACVerifierTests.swift"
+            ]
         )
     ],
     swiftLanguageVersions: [.v5]
