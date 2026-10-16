@@ -1,3 +1,4 @@
+#if canImport(Security)
 //
 //  SecKeyRSAPublicKey.swift
 //  JOSESwift
@@ -76,3 +77,4 @@ extension SecKey: ExpressibleAsRSAPublicKeyComponents {
         return try (keyData as Data).rsaPublicKeyComponents()
     }
 }
+#endif

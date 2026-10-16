@@ -28,91 +28,151 @@
 //
 
 import Foundation
+
+#if canImport(Compression)
+
 import Compression
 
 struct DeflateCompressor: CompressorProtocol {
     /// Compresses the data using the zlib deflate algorithm.
-    /// - returns: raw deflated data according to [RFC-1951](https://tools.ietf.org/html/rfc1951).
-    /// - note: Fixed at compression level 5 (best trade off between speed and time)
+    /// - returns: raw deflated data according to RFC 1951.
+    /// - note: Fixed at compression level 5.
     public func compress(data: Data) throws -> Data {
         guard data.count > 0 else {
             throw JOSESwiftError.rawDataMustBeGreaterThanZero
         }
 
-        let config = (operation: COMPRESSION_STREAM_ENCODE, algorithm: COMPRESSION_ZLIB)
-        if let data = data.withUnsafeBytes({ sourcePtr in
-            // Force unwrapping is ok, since data is guaranteed not to be empty.
-            // From the docs: If the baseAddress of this buffer is nil, the count is zero.
-            // swiftlint:disable:next force_unwrapping
-            perform(config, source: sourcePtr.baseAddress!.assumingMemoryBound(to: UInt8.self), sourceSize: data.count)
+        let config = (
+            operation: COMPRESSION_STREAM_ENCODE,
+            algorithm: COMPRESSION_ZLIB
+        )
+
+        if let compressedData = data.withUnsafeBytes({ sourcePtr in
+            // data is non-empty, so baseAddress is valid.
+            perform(
+                config,
+                source: sourcePtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                sourceSize: data.count
+            )
         }) {
-            return data
-        } else {
-            throw JOSESwiftError.compressionFailed
+            return compressedData
         }
+
+        throw JOSESwiftError.compressionFailed
     }
 
-    /// Decompresses the data using the zlib deflate algorithm. Self is expected to be a raw deflate
-    /// stream according to [RFC-1951](https://tools.ietf.org/html/rfc1951).
-    /// - returns: uncompressed data
+    /// Decompresses data using the zlib deflate algorithm.
     public func decompress(data: Data) throws -> Data {
         guard data.count > 0 else {
             throw JOSESwiftError.compressedDataMustBeGreaterThanZero
         }
 
-        let config = (operation: COMPRESSION_STREAM_DECODE, algorithm: COMPRESSION_ZLIB)
-        if let data = data.withUnsafeBytes({ sourcePtr in
-            // Force unwrapping is ok, since data is guaranteed not to be empty.
-            // From the docs: If the baseAddress of this buffer is nil, the count is zero.
-            // swiftlint:disable:next force_unwrapping
-            perform(config, source: sourcePtr.baseAddress!.assumingMemoryBound(to: UInt8.self), sourceSize: data.count)
+        let config = (
+            operation: COMPRESSION_STREAM_DECODE,
+            algorithm: COMPRESSION_ZLIB
+        )
+
+        if let decompressedData = data.withUnsafeBytes({ sourcePtr in
+            // data is non-empty, so baseAddress is valid.
+            perform(
+                config,
+                source: sourcePtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                sourceSize: data.count
+            )
         }) {
-            return data
-        } else {
-            throw JOSESwiftError.decompressionFailed
+            return decompressedData
         }
+
+        throw JOSESwiftError.decompressionFailed
     }
 }
 
-private typealias Config = (operation: compression_stream_operation, algorithm: compression_algorithm)
+private typealias Config = (
+    operation: compression_stream_operation,
+    algorithm: compression_algorithm
+)
 
-private func perform(_ config: Config, source: UnsafePointer<UInt8>, sourceSize: Int, preload: Data = Data()) -> Data? {
-    guard config.operation == COMPRESSION_STREAM_ENCODE || sourceSize > 0 else { return nil }
+private func perform(
+    _ config: Config,
+    source: UnsafePointer<UInt8>,
+    sourceSize: Int,
+    preload: Data = Data()
+) -> Data? {
+    guard config.operation == COMPRESSION_STREAM_ENCODE || sourceSize > 0 else {
+        return nil
+    }
 
     let streamBase = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
-    defer { streamBase.deallocate() }
+    defer {
+        streamBase.deallocate()
+    }
+
     var stream = streamBase.pointee
 
-    let status = compression_stream_init(&stream, config.operation, config.algorithm)
-    guard status != COMPRESSION_STATUS_ERROR else { return nil }
-    defer { compression_stream_destroy(&stream) }
+    let status = compression_stream_init(
+        &stream,
+        config.operation,
+        config.algorithm
+    )
 
-    let bufferSize = Swift.max( Swift.min(sourceSize, 64 * 1024), 64)
+    guard status != COMPRESSION_STATUS_ERROR else {
+        return nil
+    }
+
+    defer {
+        compression_stream_destroy(&stream)
+    }
+
+    let bufferSize = Swift.max(Swift.min(sourceSize, 64 * 1024), 64)
     let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-    defer { buffer.deallocate() }
 
-    stream.dst_ptr  = buffer
+    defer {
+        buffer.deallocate()
+    }
+
+    stream.dst_ptr = buffer
     stream.dst_size = bufferSize
-    stream.src_ptr  = source
+    stream.src_ptr = source
     stream.src_size = sourceSize
 
-    var res = preload
-    let flags: Int32 = Int32(COMPRESSION_STREAM_FINALIZE.rawValue)
+    var result = preload
+    let flags = Int32(COMPRESSION_STREAM_FINALIZE.rawValue)
 
     while true {
         switch compression_stream_process(&stream, flags) {
         case COMPRESSION_STATUS_OK:
-            guard stream.dst_size == 0 else { return nil }
-            res.append(buffer, count: stream.dst_ptr - buffer)
+            guard stream.dst_size == 0 else {
+                return nil
+            }
+
+            result.append(buffer, count: stream.dst_ptr - buffer)
             stream.dst_ptr = buffer
             stream.dst_size = bufferSize
 
         case COMPRESSION_STATUS_END:
-            res.append(buffer, count: stream.dst_ptr - buffer)
-            return res
+            result.append(buffer, count: stream.dst_ptr - buffer)
+            return result
 
         default:
             return nil
         }
     }
 }
+
+#else
+
+/// The Apple `Compression` framework is unavailable on Linux.
+///
+/// JWE using `zip: "DEF"` cannot be processed until a Linux zlib backend is
+/// implemented for this package.
+struct DeflateCompressor: CompressorProtocol {
+    func compress(data: Data) throws -> Data {
+        throw JOSESwiftError.compressionFailed
+    }
+
+    func decompress(data: Data) throws -> Data {
+        throw JOSESwiftError.decompressionFailed
+    }
+}
+
+#endif

@@ -120,11 +120,9 @@ extension Data {
     /// - Returns: `true` if both data are equal, otherwise `false`.
     func timingSafeCompare(with other: Data) -> Bool {
         assert(self.count == other.count, "parameters should be of same length")
-        if #available(iOS 10.1, *) {
-            return timingsafe_bcmp([UInt8](self), [UInt8](other), self.count) == 0
-        } else {
-            return _timingSafeCompare(with: other)
-        }
+        // `timingsafe_bcmp` is Darwin-only. This local comparison
+        // visits every byte and is available on Linux.
+        return _timingSafeCompare(with: other)
     }
 
     func _timingSafeCompare(with other: Data) -> Bool {

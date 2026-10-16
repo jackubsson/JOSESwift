@@ -1,3 +1,4 @@
+#if canImport(Security)
 //
 //  ECDHKeyAgreement.swift
 //  JOSESwift
@@ -22,7 +23,9 @@
 //
 
 import Foundation
+#if canImport(CommonCrypto)
 import CommonCrypto
+#endif
 
 /// keyAgreementCompute
 ///
@@ -217,3 +220,4 @@ enum Hash: String {
         }
     }
 }
+#endif

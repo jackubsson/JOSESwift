@@ -4,46 +4,57 @@
 //
 
 import Foundation
+
+#if canImport(CryptoKit)
 import CryptoKit
+#elseif canImport(Crypto)
+import Crypto
+#endif
 
-enum AESGCM {
-    typealias KeyType = Data
-
-    /// Encrypts a plain text using a given `AES.GCM` algorithm.
-    ///
-    /// - Parameters:
-    ///   - plaintext: The plain text to encrypt.
-    ///   - encryptionKey: The symmetric key.
-    ///   - initializationVector: The initial block.
-    ///   - additionalAuthenticatedData: The additional data block that is to be authenticated.
-    /// - Returns: The encryption context containing ciphertext, the authentication tag and the `IV`
-    /// - Throws: an error if any error occurs during encryption.
+internal enum AESGCM {
     static func encrypt(
         plaintext: Data,
-        encryptionKey: KeyType,
+        encryptionKey: Data,
         initializationVector: Data,
         additionalAuthenticatedData: Data
     ) throws -> ContentEncryptionContext {
+        #if canImport(CryptoKit)
         let key = CryptoKit.SymmetricKey(data: encryptionKey)
         let nonce = try CryptoKit.AES.GCM.Nonce(data: initializationVector)
-        let encrypted = try CryptoKit.AES.GCM.seal(plaintext, using: key, nonce: nonce, authenticating: additionalAuthenticatedData)
+
+        let sealedBox = try CryptoKit.AES.GCM.seal(
+            plaintext,
+            using: key,
+            nonce: nonce,
+            authenticating: additionalAuthenticatedData
+        )
+
         return ContentEncryptionContext(
-            ciphertext: encrypted.ciphertext,
-            authenticationTag: encrypted.tag,
+            ciphertext: sealedBox.ciphertext,
+            authenticationTag: sealedBox.tag,
             initializationVector: initializationVector
         )
+        #elseif canImport(Crypto)
+        let key = Crypto.SymmetricKey(data: encryptionKey)
+        let nonce = try Crypto.AES.GCM.Nonce(data: initializationVector)
+
+        let sealedBox = try Crypto.AES.GCM.seal(
+            plaintext,
+            using: key,
+            nonce: nonce,
+            authenticating: additionalAuthenticatedData
+        )
+
+        return ContentEncryptionContext(
+            ciphertext: sealedBox.ciphertext,
+            authenticationTag: sealedBox.tag,
+            initializationVector: initializationVector
+        )
+        #else
+        throw JOSESwiftError.encryptionFailed
+        #endif
     }
 
-    /// Decrypts a cipher text using a given `AES.GCM` algorithm.
-    ///
-    /// - Parameters:
-    ///   - cipherText: The encrypted cipher text to decrypt.
-    ///   - decryptionKey: The symmetric key.
-    ///   - initializationVector: The initial block.
-    ///   - authenticationTag: The authentication tag.
-    ///   - additionalAuthenticatedData: The additional data block that is to be authenticated.
-    /// - Returns: The plain text (decrypted cipher text).
-    /// - Throws: The call throws an error if decryption or authentication fails
     static func decrypt(
         cipherText: Data,
         decryptionKey: Data,
@@ -51,10 +62,38 @@ enum AESGCM {
         authenticationTag: Data,
         additionalAuthenticatedData: Data
     ) throws -> Data {
+        #if canImport(CryptoKit)
         let key = CryptoKit.SymmetricKey(data: decryptionKey)
         let nonce = try CryptoKit.AES.GCM.Nonce(data: initializationVector)
-        let encrypted = try CryptoKit.AES.GCM.SealedBox(nonce: nonce, ciphertext: cipherText, tag: authenticationTag)
-        let decrypted = try CryptoKit.AES.GCM.open(encrypted, using: key, authenticating: additionalAuthenticatedData)
-        return decrypted
-        }
+
+        let sealedBox = try CryptoKit.AES.GCM.SealedBox(
+            nonce: nonce,
+            ciphertext: cipherText,
+            tag: authenticationTag
+        )
+
+        return try CryptoKit.AES.GCM.open(
+            sealedBox,
+            using: key,
+            authenticating: additionalAuthenticatedData
+        )
+        #elseif canImport(Crypto)
+        let key = Crypto.SymmetricKey(data: decryptionKey)
+        let nonce = try Crypto.AES.GCM.Nonce(data: initializationVector)
+
+        let sealedBox = try Crypto.AES.GCM.SealedBox(
+            nonce: nonce,
+            ciphertext: cipherText,
+            tag: authenticationTag
+        )
+
+        return try Crypto.AES.GCM.open(
+            sealedBox,
+            using: key,
+            authenticating: additionalAuthenticatedData
+        )
+        #else
+        throw JOSESwiftError.decryptionFailed
+        #endif
     }
+}

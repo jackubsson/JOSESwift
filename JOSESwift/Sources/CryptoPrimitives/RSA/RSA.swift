@@ -22,7 +22,6 @@
 //
 
 import Foundation
-import Security
 
 internal enum RSAError: Error {
     case algorithmNotSupported
@@ -33,6 +32,9 @@ internal enum RSAError: Error {
     case encryptingFailed(description: String)
     case decryptingFailed(description: String)
 }
+
+#if canImport(Security)
+import Security
 
 fileprivate extension SignatureAlgorithm {
     var secKeyAlgorithm: SecKeyAlgorithm? {
@@ -296,3 +298,48 @@ internal struct RSA {
         return plainText as Data
     }
 }
+#else
+
+/// Linux does not expose Apple's Security.framework or SecKey.
+///
+/// RSA support requires a separate backend, for example OpenSSL.  This
+/// placeholder preserves compilation of generic JWS/JWE call sites while
+/// returning the library's normal unsupported-algorithm error at runtime.
+internal struct RSA {
+    typealias KeyType = Any
+
+    static func sign(
+        _ signingInput: Data,
+        with privateKey: KeyType,
+        and algorithm: SignatureAlgorithm
+    ) throws -> Data {
+        throw RSAError.algorithmNotSupported
+    }
+
+    static func verify(
+        _ verifyingInput: Data,
+        against signature: Data,
+        with publicKey: KeyType,
+        and algorithm: SignatureAlgorithm
+    ) throws -> Bool {
+        throw RSAError.algorithmNotSupported
+    }
+
+    static func encrypt(
+        _ plaintext: Data,
+        with publicKey: KeyType,
+        and algorithm: KeyManagementAlgorithm
+    ) throws -> Data {
+        throw RSAError.algorithmNotSupported
+    }
+
+    static func decrypt(
+        _ ciphertext: Data,
+        with privateKey: KeyType,
+        and algorithm: KeyManagementAlgorithm
+    ) throws -> Data {
+        throw RSAError.algorithmNotSupported
+    }
+}
+
+#endif

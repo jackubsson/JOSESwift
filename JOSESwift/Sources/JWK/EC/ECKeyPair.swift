@@ -1,3 +1,4 @@
+#if canImport(Security)
 //
 //  ECKeyPair.swift
 //  JOSESwift
@@ -63,3 +64,4 @@ public extension ECPrivateKey {
 public enum ECKeyPairError: Error {
     case generateECKeyPairFail
 }
+#endif

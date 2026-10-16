@@ -1,3 +1,4 @@
+#if canImport(Security)
 //
 //  SecKeyECPrivateKey.swift
 //  JOSESwift
@@ -79,3 +80,4 @@ extension SecKey: ExpressibleAsECPrivateKeyComponents {
         return try (keyData as Data).ecPrivateKeyComponents()
     }
 }
+#endif

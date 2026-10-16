@@ -22,7 +22,12 @@
 //
 
 import Foundation
+
+#if canImport(CommonCrypto)
 import CommonCrypto
+#else
+import CryptoSwift
+#endif
 
 internal enum PBES2Error: Error {
     case unknownOrUnsupportedAlgorithm
@@ -35,14 +40,15 @@ internal struct PBES2 {
         saltInput: Data,
         iterationCount: Int
     ) throws -> Data {
-        let supportedKeyManagementAlgorithms: [KeyManagementAlgorithm] = [
+        let supportedAlgorithms: [KeyManagementAlgorithm] = [
             .PBES2_HS256_A128KW,
             .PBES2_HS384_A192KW,
             .PBES2_HS512_A256KW
         ]
 
         guard
-            supportedKeyManagementAlgorithms.contains(algorithm),
+            supportedAlgorithms.contains(algorithm),
+            iterationCount > 0,
             let passwordData = password.data(using: .utf8),
             let algorithmData = algorithm.rawValue.data(using: .utf8),
             let derivedKeyLength = algorithm.derivedKeyLength
@@ -50,40 +56,80 @@ internal struct PBES2 {
             throw PBES2Error.unknownOrUnsupportedAlgorithm
         }
 
+        let saltData = algorithmData + Data([0x00]) + saltInput
+
+        #if canImport(CommonCrypto)
         guard let hmacAlgorithm = algorithm.hmacAlgorithm else {
             throw HMACError.algorithmNotSupported
         }
 
-        let saltData = algorithmData + Data([0x00]) + saltInput
-
         var derivedKey = Data(count: derivedKeyLength)
-        let result: Int = derivedKey.withUnsafeMutableBytes { derivedKeyBytes in
-            saltData.withUnsafeBytes { saltBytes in
-                passwordData.withUnsafeBytes { passwordBytes in
-                    guard let derivedKeyBaseAddress = derivedKeyBytes.baseAddress,
-                          let saltBaseAddress = saltBytes.baseAddress,
-                          let passwordBaseAddress = passwordBytes.baseAddress else {
-                        return Int(kCCParamError)
-                    }
-                    return Int(CCKeyDerivationPBKDF(
+
+        let status = derivedKey.withUnsafeMutableBytes { derivedKeyBuffer in
+            saltData.withUnsafeBytes { saltBuffer in
+                passwordData.withUnsafeBytes { passwordBuffer in
+                    CCKeyDerivationPBKDF(
                         CCPBKDFAlgorithm(kCCPBKDF2),
-                        passwordBaseAddress,
+                        passwordBuffer.baseAddress,
                         passwordData.count,
-                        saltBaseAddress,
+                        saltBuffer.baseAddress,
                         saltData.count,
                         hmacAlgorithm.ccPseudoRandomAlgorithm,
                         UInt32(iterationCount),
-                        derivedKeyBaseAddress,
-                        derivedKeyBytes.count
-                    ))
+                        derivedKeyBuffer.bindMemory(to: UInt8.self).baseAddress,
+                        derivedKeyLength
+                    )
                 }
             }
         }
 
-        if result == kCCSuccess {
-            return derivedKey
-        } else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(result), userInfo: nil)
+        guard status == kCCSuccess else {
+            throw NSError(
+                domain: NSOSStatusErrorDomain,
+                code: Int(status),
+                userInfo: nil
+            )
+        }
+
+        return derivedKey
+        #else
+        let variant: CryptoSwift.HMAC.Variant
+
+        switch algorithm {
+        case .PBES2_HS256_A128KW:
+            variant = .sha2(.sha256)
+        case .PBES2_HS384_A192KW:
+            variant = .sha2(.sha384)
+        case .PBES2_HS512_A256KW:
+            variant = .sha2(.sha512)
+        default:
+            throw PBES2Error.unknownOrUnsupportedAlgorithm
+        }
+
+        let pbkdf2 = try PKCS5.PBKDF2(
+            password: Array(passwordData),
+            salt: Array(saltData),
+            iterations: iterationCount,
+            keyLength: derivedKeyLength,
+            variant: variant
+        )
+
+        return Data(try pbkdf2.calculate())
+        #endif
+    }
+}
+
+#if canImport(CommonCrypto)
+private extension HMACAlgorithm {
+    var ccPseudoRandomAlgorithm: CCPseudoRandomAlgorithm {
+        switch self {
+        case .SHA256:
+            return CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256)
+        case .SHA384:
+            return CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA384)
+        case .SHA512:
+            return CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA512)
         }
     }
 }
+#endif

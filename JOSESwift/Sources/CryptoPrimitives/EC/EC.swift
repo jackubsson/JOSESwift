@@ -22,13 +22,6 @@
 //
 
 import Foundation
-import Security
-import CommonCrypto
-#if !os(tvOS)
-#if canImport(LocalAuthentication)
-import LocalAuthentication
-#endif
-#endif
 
 internal enum ECError: Error {
     case unknownOrUnsupportedAlgorithm
@@ -106,6 +99,22 @@ public enum ECCurveType: String, Codable {
     }
 }
 
+public enum ECCompression: UInt8 {
+    case CompressedYEven = 0x02
+    case CompressedYOdd = 0x03
+    case Uncompressed = 0x04 // supported only
+    case HybridYEven = 0x06
+    case HybridYOdd = 0x07
+}
+
+#if canImport(Security)
+import Security
+#if !os(tvOS)
+#if canImport(LocalAuthentication)
+import LocalAuthentication
+#endif
+#endif
+
 fileprivate extension SignatureAlgorithm {
 
     var secKeyAlgorithm: SecKeyAlgorithm? {
@@ -136,13 +145,6 @@ fileprivate extension SignatureAlgorithm {
 }
 
 // Point compression prefix. Based on X9.62, Section 4.3.6
-public enum ECCompression: UInt8 {
-    case CompressedYEven = 0x02
-    case CompressedYOdd = 0x03
-    case Uncompressed = 0x04 // supported only
-    case HybridYEven = 0x06
-    case HybridYOdd = 0x07
-}
 
 internal struct EC {
     typealias KeyType = SecKey
@@ -369,3 +371,96 @@ internal struct EC {
         }
     }
 }
+#else
+
+/// Linux does not have Apple's Security.framework or SecKey.
+///
+/// This placeholder allows generic signer/verifier plumbing to compile.
+/// EC signing on Linux must be implemented using `Crypto` key types rather
+/// than passed as `SecKey` values.
+internal struct EC {
+    typealias KeyType = Any
+    typealias PrivateKey = ECPrivateKey
+    typealias PublicKey = ECPublicKey
+
+    static func sign(
+        _ signingInput: Data,
+        with privateKey: KeyType,
+        and algorithm: SignatureAlgorithm
+    ) throws -> Data {
+        throw ECError.unknownOrUnsupportedAlgorithm
+    }
+
+    static func verify(
+        _ verifyingInput: Data,
+        against signature: Data,
+        with publicKey: KeyType,
+        and algorithm: SignatureAlgorithm
+    ) throws -> Bool {
+        throw ECError.unknownOrUnsupportedAlgorithm
+    }
+
+    /// ECDH-ES requires a real EC key-agreement backend. It is not provided
+    /// by the current Linux fallback, so reject it explicitly rather than
+    /// producing invalid or insecure key material.
+    static func encryptionContextFor(
+        _ publicKey: PublicKey,
+        algorithm: KeyManagementAlgorithm,
+        encryption: ContentEncryptionAlgorithm,
+        header: JWEHeader,
+        options: [String: Any] = [:]
+    ) throws -> (
+        contentEncryptionKey: Data,
+        encryptedKey: Data,
+        jweHeaderData: Data
+    ) {
+        throw ECError.unknownOrUnsupportedAlgorithm
+    }
+
+    /// See `encryptionContextFor(_:algorithm:encryption:header:options:)`.
+    static func decrypt(
+        _ encryptedKey: Data,
+        privateKey: PrivateKey,
+        algorithm: KeyManagementAlgorithm,
+        encryption: ContentEncryptionAlgorithm,
+        header: JWEHeader?
+    ) throws -> Data {
+        throw ECError.unknownOrUnsupportedAlgorithm
+    }
+
+    internal struct Asn1IntegerConversion {
+        static func toRaw(_ data: Data, of fixedLength: Int) -> Data {
+            let variableLength = data.count
+            if variableLength > fixedLength + 1 {
+                fatalError(
+                    "ASN.1 integer is \(variableLength) bytes long when it should be < \(fixedLength + 1)."
+                )
+            }
+            if variableLength == fixedLength + 1 {
+                assert(data.first == 0)
+                return data.dropFirst()
+            }
+            if variableLength == fixedLength {
+                return data
+            }
+            return Data(count: fixedLength - variableLength) + data
+        }
+
+        static func fromRaw(_ data: Data) -> Data {
+            assert(!data.isEmpty)
+
+            let variableLength = data.drop { $0 == 0 }
+            guard let firstNonZero = variableLength.first else {
+                return Data([0])
+            }
+
+            if (firstNonZero & 0x80) != 0 {
+                return Data([0]) + variableLength
+            }
+
+            return variableLength
+        }
+    }
+}
+
+#endif

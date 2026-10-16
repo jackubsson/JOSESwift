@@ -21,6 +21,7 @@
 //  ---------------------------------------------------------------------------
 //
 
+#if canImport(CommonCrypto)
 import Foundation
 import CommonCrypto
 
@@ -367,3 +368,238 @@ extension AES {
         return (rawKey, status)
     }
 }
+
+
+#else
+
+import Foundation
+import CryptoSwift
+
+internal enum AESError: Error {
+    case keyLengthNotSatisfied
+    case encryptingFailed(description: String)
+    case decryptingFailed(description: String)
+    case cannotPerformOperationOnEmptyDataBuffer
+    case invalidAlgorithm
+}
+
+fileprivate extension ContentEncryptionAlgorithm {
+    func checkAESKeyLength(for key: Data) -> Bool {
+        switch self {
+        case .A256CBCHS512, .A256GCM: return key.count == 32
+        case .A192CBCHS384, .A192GCM: return key.count == 24
+        case .A128CBCHS256, .A128GCM: return key.count == 16
+        }
+    }
+}
+
+extension KeyManagementAlgorithm {
+    func checkAESKeyLength(for key: Data) -> Bool? {
+        switch self {
+        case .A128KW: return key.count == 16
+        case .A192KW: return key.count == 24
+        case .A256KW: return key.count == 32
+        default: return nil
+        }
+    }
+
+    var keyBitSize: Int? {
+        switch self {
+        case .A128KW: return 128
+        case .A192KW: return 192
+        case .A256KW: return 256
+        default: return nil
+        }
+    }
+}
+
+enum AES {
+    typealias KeyType = Data
+
+    static func encrypt(
+        _ plaintext: Data,
+        with encryptionKey: KeyType,
+        using algorithm: ContentEncryptionAlgorithm,
+        and initializationVector: Data
+    ) throws -> Data {
+        switch algorithm {
+        case .A256CBCHS512, .A192CBCHS384, .A128CBCHS256:
+            guard algorithm.checkAESKeyLength(for: encryptionKey) else {
+                throw AESError.keyLengthNotSatisfied
+            }
+            guard !plaintext.isEmpty else {
+                throw AESError.cannotPerformOperationOnEmptyDataBuffer
+            }
+            guard initializationVector.count == 16 else {
+                throw AESError.encryptingFailed(description: "AES-CBC requires a 16-byte IV.")
+            }
+
+            do {
+                let cipher = try CryptoSwift.AES(
+                    key: Array(encryptionKey),
+                    blockMode: CryptoSwift.CBC(iv: Array(initializationVector)),
+                    padding: .pkcs7
+                )
+                return Data(try cipher.encrypt(Array(plaintext)))
+            } catch {
+                throw AESError.encryptingFailed(description: "\(error)")
+            }
+
+        case .A256GCM, .A192GCM, .A128GCM:
+            throw AESError.invalidAlgorithm
+        }
+    }
+
+    static func decrypt(
+        cipherText: Data,
+        with decryptionKey: Data,
+        using algorithm: ContentEncryptionAlgorithm,
+        and initializationVector: Data
+    ) throws -> Data {
+        switch algorithm {
+        case .A256CBCHS512, .A192CBCHS384, .A128CBCHS256:
+            guard algorithm.checkAESKeyLength(for: decryptionKey) else {
+                throw AESError.keyLengthNotSatisfied
+            }
+            guard !cipherText.isEmpty else {
+                throw AESError.cannotPerformOperationOnEmptyDataBuffer
+            }
+            guard initializationVector.count == 16 else {
+                throw AESError.decryptingFailed(description: "AES-CBC requires a 16-byte IV.")
+            }
+
+            do {
+                let cipher = try CryptoSwift.AES(
+                    key: Array(decryptionKey),
+                    blockMode: CryptoSwift.CBC(iv: Array(initializationVector)),
+                    padding: .pkcs7
+                )
+                return Data(try cipher.decrypt(Array(cipherText)))
+            } catch {
+                throw AESError.decryptingFailed(description: "\(error)")
+            }
+
+        case .A256GCM, .A192GCM, .A128GCM:
+            throw AESError.invalidAlgorithm
+        }
+    }
+
+    static func wrap(
+        rawKey: Data,
+        keyEncryptionKey: Data,
+        algorithm: KeyManagementAlgorithm
+    ) throws -> Data {
+        guard [.A128KW, .A192KW, .A256KW].contains(algorithm) else {
+            throw AESError.invalidAlgorithm
+        }
+        guard algorithm.checkAESKeyLength(for: keyEncryptionKey) == true else {
+            throw AESError.keyLengthNotSatisfied
+        }
+        guard rawKey.count >= 16, rawKey.count % 8 == 0 else {
+            throw AESError.encryptingFailed(description: "Invalid RFC 3394 key length.")
+        }
+
+        do {
+            return try rfc3394Wrap(rawKey: rawKey, key: keyEncryptionKey)
+        } catch {
+            throw AESError.encryptingFailed(description: "\(error)")
+        }
+    }
+
+    static func unwrap(
+        wrappedKey: Data,
+        keyEncryptionKey: Data,
+        algorithm: KeyManagementAlgorithm
+    ) throws -> Data {
+        guard [.A128KW, .A192KW, .A256KW].contains(algorithm) else {
+            throw AESError.invalidAlgorithm
+        }
+        guard algorithm.checkAESKeyLength(for: keyEncryptionKey) == true else {
+            throw AESError.keyLengthNotSatisfied
+        }
+        guard wrappedKey.count >= 24, wrappedKey.count % 8 == 0 else {
+            throw AESError.decryptingFailed(description: "Invalid RFC 3394 wrapped-key length.")
+        }
+
+        do {
+            return try rfc3394Unwrap(wrappedKey: wrappedKey, key: keyEncryptionKey)
+        } catch {
+            throw AESError.decryptingFailed(description: "\(error)")
+        }
+    }
+
+    private static let wrapIV = [UInt8](repeating: 0xA6, count: 8)
+
+    private static func blockCrypt(
+        _ block: [UInt8],
+        key: Data,
+        decrypt: Bool
+    ) throws -> [UInt8] {
+        guard block.count == 16 else {
+            throw AESError.invalidAlgorithm
+        }
+        let aes = try CryptoSwift.AES(
+            key: Array(key),
+            blockMode: CryptoSwift.ECB(),
+            padding: .noPadding
+        )
+        return try decrypt ? aes.decrypt(block) : aes.encrypt(block)
+    }
+
+    private static func xorCounter(_ a: [UInt8], _ t: UInt64) -> [UInt8] {
+        var result = a
+        for i in 0..<8 {
+            result[i] ^= UInt8(truncatingIfNeeded: t >> (8 * (7 - i)))
+        }
+        return result
+    }
+
+    private static func rfc3394Wrap(rawKey: Data, key: Data) throws -> Data {
+        let bytes = Array(rawKey)
+        let n = bytes.count / 8
+        var a = wrapIV
+        var r = (0..<n).map { i in
+            Array(bytes[(i * 8)..<(i * 8 + 8)])
+        }
+
+        for j in 0..<6 {
+            for i in 0..<n {
+                let b = try blockCrypt(a + r[i], key: key, decrypt: false)
+                let t = UInt64(n * j + i + 1)
+                a = xorCounter(Array(b[0..<8]), t)
+                r[i] = Array(b[8..<16])
+            }
+        }
+        return Data(a + r.flatMap { $0 })
+    }
+
+    private static func rfc3394Unwrap(wrappedKey: Data, key: Data) throws -> Data {
+        let bytes = Array(wrappedKey)
+        let n = bytes.count / 8 - 1
+        var a = Array(bytes[0..<8])
+        var r = (0..<n).map { i in
+            Array(bytes[((i + 1) * 8)..<((i + 2) * 8)])
+        }
+
+        for j in stride(from: 5, through: 0, by: -1) {
+            for i in stride(from: n - 1, through: 0, by: -1) {
+                let t = UInt64(n * j + i + 1)
+                let b = try blockCrypt(xorCounter(a, t) + r[i], key: key, decrypt: true)
+                a = Array(b[0..<8])
+                r[i] = Array(b[8..<16])
+            }
+        }
+
+        // RFC 3394 integrity check: A must equal A6A6A6A6A6A6A6A6.
+        var difference: UInt8 = 0
+        for i in 0..<8 {
+            difference |= a[i] ^ wrapIV[i]
+        }
+        guard difference == 0 else {
+            throw AESError.decryptingFailed(description: "AES key-wrap integrity check failed.")
+        }
+        return Data(r.flatMap { $0 })
+    }
+}
+
+#endif

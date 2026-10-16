@@ -22,37 +22,60 @@
 //
 
 import Foundation
+
+#if canImport(Security)
 import Security
+#endif
 
 public enum SecureRandomError: Error {
+    #if canImport(Security)
     case failed(status: OSStatus)
+    #endif
     case countMustBeGreaterThanZero
 }
 
 public struct SecureRandom {
-    /// Generates secure random data with a given count.
+    /// Generates cryptographically secure random data with the requested size.
     ///
-    /// - Parameter count: The count of the random generated data. Must be greater than 0.
-    /// - Returns: The random generated data.
-    /// - Throws: `SecureRandomError` if any error occurs during generation of secure random bytes. 
+    /// - Parameter count: Number of random bytes to generate. Must be greater
+    ///   than zero.
+    /// - Returns: Cryptographically secure random bytes.
+    /// - Throws: `SecureRandomError.countMustBeGreaterThanZero` when `count`
+    ///   is zero or negative; on Apple platforms it may also throw
+    ///   `SecureRandomError.failed(status:)`.
     public static func generate(count: Int) throws -> Data {
         guard count > 0 else {
             throw SecureRandomError.countMustBeGreaterThanZero
         }
 
+        #if canImport(Security)
         var generatedRandom = Data(count: count)
 
-        let randomGenerationStatus = generatedRandom.withUnsafeMutableBytes { mutableRandomBytes in
-            // Force unwrapping is ok, since the buffer is guaranteed not to be empty.
-            // From the docs: If the baseAddress of this buffer is nil, the count is zero.
-            // swiftlint:disable:next force_unwrapping
-            SecRandomCopyBytes(kSecRandomDefault, count, mutableRandomBytes.baseAddress!)
+        let status = generatedRandom.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, count, buffer.baseAddress!)
         }
 
-        guard randomGenerationStatus == errSecSuccess else {
-            throw SecureRandomError.failed(status: randomGenerationStatus)
+        guard status == errSecSuccess else {
+            throw SecureRandomError.failed(status: status)
         }
 
         return generatedRandom
+        #else
+        var generator = SystemRandomNumberGenerator()
+        var generatedRandom = Data(count: count)
+
+        generatedRandom.withUnsafeMutableBytes { buffer in
+            let bytes = buffer.bindMemory(to: UInt8.self)
+
+            for index in bytes.indices {
+                bytes[index] = UInt8.random(
+                    in: UInt8.min...UInt8.max,
+                    using: &generator
+                )
+            }
+        }
+
+        return generatedRandom
+        #endif
     }
 }

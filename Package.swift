@@ -7,8 +7,20 @@ let package = Package(
     products: [
         .library(name: "JOSESwift", targets: ["JOSESwift"])
     ],
-    dependencies: [],
-    targets: [
-        .target(name: "JOSESwift", path: "JOSESwift")
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
+        .package(url: "https://github.com/krzyzanowskim/CryptoSwift.git", from: "1.8.4")
     ],
-    swiftLanguageVersions: [.v5])
+    targets: [
+        .target(
+            name: "JOSESwift",
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux])),
+                .product(name: "CryptoSwift", package: "CryptoSwift", condition: .when(platforms: [.linux]))
+            ],
+            path: "JOSESwift",
+            exclude: ["Support/Info.plist"]
+        )
+    ],
+    swiftLanguageVersions: [.v5]
+)

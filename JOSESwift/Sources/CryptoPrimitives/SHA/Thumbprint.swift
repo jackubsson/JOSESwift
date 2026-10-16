@@ -22,47 +22,45 @@
 //
 
 import Foundation
+
+#if canImport(CommonCrypto)
 import CommonCrypto
+#else
+import Crypto
+#endif
 
 enum ThumbprintError: Error {
     case inputMustBeGreaterThanZero
 }
 
-fileprivate extension JWKThumbprintAlgorithm {
-    var outputLength: Int {
-        switch self {
-        case .SHA256:
-            return Int(CC_SHA256_DIGEST_LENGTH)
-        }
-    }
-
-    func calculate(input: UnsafeRawBufferPointer, output: UnsafeMutablePointer<UInt8>) {
-        switch self {
-        case .SHA256:
-            CC_SHA256(input.baseAddress, CC_LONG(input.count), output)
-        }
-    }
-}
-
 internal struct Thumbprint {
-    /// Calculates a hash of an input with a specific hash algorithm.
-    ///
-    /// - Parameters:
-    ///   - input: The input to calculate a hash for.
-    ///   - algorithm: The algorithm used to calculate the hash.
-    /// - Returns: The calculated hash in base64URLEncoding.
-    static func calculate(from input: Data, algorithm: JWKThumbprintAlgorithm) throws -> String {
-        guard input.count > 0 else {
+    static func calculate(
+        from input: Data,
+        algorithm: JWKThumbprintAlgorithm
+    ) throws -> String {
+        guard !input.isEmpty else {
             throw ThumbprintError.inputMustBeGreaterThanZero
         }
 
-        let hashBytes = UnsafeMutablePointer<UInt8>.allocate(capacity: algorithm.outputLength)
-        defer { hashBytes.deallocate() }
+        switch algorithm {
+        case .SHA256:
+            #if canImport(CommonCrypto)
+            var digest = Data(count: Int(CC_SHA256_DIGEST_LENGTH))
 
-        input.withUnsafeBytes { buffer in
-            algorithm.calculate(input: buffer, output: hashBytes)
+            digest.withUnsafeMutableBytes { digestBuffer in
+                input.withUnsafeBytes { inputBuffer in
+                    _ = CC_SHA256(
+                        inputBuffer.baseAddress,
+                        CC_LONG(input.count),
+                        digestBuffer.bindMemory(to: UInt8.self).baseAddress
+                    )
+                }
+            }
+
+            return digest.base64URLEncodedString()
+            #else
+            return Data(SHA256.hash(data: input)).base64URLEncodedString()
+            #endif
         }
-
-        return Data(bytes: hashBytes, count: algorithm.outputLength).base64URLEncodedString()
     }
 }

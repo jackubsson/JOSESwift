@@ -22,71 +22,71 @@
 //
 
 import Foundation
+
+#if canImport(CommonCrypto)
 import CommonCrypto
+#else
+import Crypto
+#endif
 
 enum HMACError: Error {
     case algorithmNotSupported
     case inputMustBeGreaterThanZero
 }
 
-extension HMACAlgorithm {
-    var ccAlgorithm: CCAlgorithm {
-        switch self {
-        case .SHA512:
-            return CCAlgorithm(kCCHmacAlgSHA512)
-        case .SHA384:
-            return CCAlgorithm(kCCHmacAlgSHA384)
-        case .SHA256:
-            return CCAlgorithm(kCCHmacAlgSHA256)
-        }
-    }
-
-    var ccPseudoRandomAlgorithm: CCPseudoRandomAlgorithm {
-        switch self {
-        case .SHA512:
-            return CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA512)
-        case .SHA384:
-            return CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA384)
-        case .SHA256:
-            return CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256)
-        }
-    }
-}
-
 internal struct HMAC {
     typealias KeyType = Data
 
-    /// Calculates a HMAC of an input with a specific HMAC algorithm and the corresponding HMAC key.
-    ///
-    /// - Parameters:
-    ///   - input: The input to calculate a HMAC for.
-    ///   - key: The key used in the HMAC algorithm. Must not be empty.
-    ///   - algorithm: The algorithm used to calculate the HMAC.
-    /// - Returns: The calculated HMAC.
-    static func calculate(from input: Data, with key: Data, using algorithm: HMACAlgorithm) throws -> Data {
-        guard input.count > 0 else {
+    static func calculate(
+        from input: Data,
+        with key: Data,
+        using algorithm: HMACAlgorithm
+    ) throws -> Data {
+        guard !input.isEmpty else {
             throw HMACError.inputMustBeGreaterThanZero
         }
 
-        var hmacOutData = Data(count: algorithm.outputLength)
+        #if canImport(CommonCrypto)
+        let ccAlgorithm: CCHmacAlgorithm
 
-        // Force unwrapping is ok, since input count is checked and key and algorithm are assumed not to be empty.
-        // From the docs: If the baseAddress of this buffer is nil, the count is zero.
-        // swiftlint:disable force_unwrapping
-        hmacOutData.withUnsafeMutableBytes { hmacOutBytes in
-            key.withUnsafeBytes { keyBytes in
-                input.withUnsafeBytes { inputBytes in
+        switch algorithm {
+        case .SHA256:
+            ccAlgorithm = CCHmacAlgorithm(kCCHmacAlgSHA256)
+        case .SHA384:
+            ccAlgorithm = CCHmacAlgorithm(kCCHmacAlgSHA384)
+        case .SHA512:
+            ccAlgorithm = CCHmacAlgorithm(kCCHmacAlgSHA512)
+        }
+
+        var result = Data(count: algorithm.outputLength)
+
+        result.withUnsafeMutableBytes { resultBuffer in
+            key.withUnsafeBytes { keyBuffer in
+                input.withUnsafeBytes { inputBuffer in
                     CCHmac(
-                        algorithm.ccAlgorithm,
-                        keyBytes.baseAddress!, key.count,
-                        inputBytes.baseAddress!, input.count,
-                        hmacOutBytes.baseAddress!
+                        ccAlgorithm,
+                        keyBuffer.baseAddress,
+                        key.count,
+                        inputBuffer.baseAddress,
+                        input.count,
+                        resultBuffer.baseAddress
                     )
                 }
             }
         }
-        // swiftlint:enable force_unwrapping
 
-        return hmacOutData
+        return result
+        #else
+        let symmetricKey = Crypto.SymmetricKey(data: key)
+
+        switch algorithm {
+        case .SHA256:
+            return Data(Crypto.HMAC<Crypto.SHA256>.authenticationCode(for: input, using: symmetricKey))
+        case .SHA384:
+            return Data(Crypto.HMAC<Crypto.SHA384>.authenticationCode(for: input, using: symmetricKey))
+        case .SHA512:
+            return Data(Crypto.HMAC<Crypto.SHA512>.authenticationCode(for: input, using: symmetricKey))
+        }
+        #endif
     }
 }
